@@ -1,0 +1,52 @@
+pipeline {
+  agent any
+
+  environment {
+    IMAGE = "tg/todo-app:ci"
+    KUBECONFIG = "/home/jenkins/.kube/config"
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Build & Test (Gradle)') {
+      steps {
+        sh 'chmod +x gradlew'
+        sh './gradlew --no-daemon clean test'
+        sh './gradlew --no-daemon build -x test'
+      }
+    }
+
+    stage('Docker Build') {
+      steps {
+        sh 'docker version'
+        sh 'docker build -t $IMAGE .'
+      }
+    }
+
+    stage('Deploy to Minikube') {
+      steps {
+        sh 'kubectl config current-context'
+        sh 'kubectl apply -f k8s/deployment.yaml'
+        sh 'kubectl apply -f k8s/service.yaml'
+        sh 'kubectl rollout status deployment/todo-app --timeout=120s'
+      }
+    }
+
+    stage('Smoke Test') {
+      steps {
+        sh '''
+          set -e
+          # minikube IP доступен из Jenkins, т.к. мы подключили сеть
+          MINIKUBE_IP=$(kubectl get node minikube -o jsonpath="{.status.addresses[?(@.type=='InternalIP')].address}")
+          echo "Minikube IP: $MINIKUBE_IP"
+          curl -sSf "http://$MINIKUBE_IP:30080/actuator/health"
+        '''
+      }
+    }
+  }
+}
